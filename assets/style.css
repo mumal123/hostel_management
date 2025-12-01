@@ -255,3 +255,64 @@ footer{
   .container{padding:12px}
   .login-card{margin:40px auto;padding:26px}
 }
+/* ===== CLEAN WHITE SIDEBAR WITH BLACK TITLE ===== */
+
+.sidebar {
+    width: 230px;
+    background: #ffffff;                
+    border-right: 1px solid #e5e7eb;    
+    height: 100vh;
+    position: fixed;
+    top: 0;
+    left: 0;
+    display: flex;
+    flex-direction: column;
+    z-index: 50;
+    overflow-y: auto;
+
+}
+
+/* BLACK TITLE BAR */
+.sidebar-title {
+    background: #111;               /* BLACK */
+    color: #ffffff;                 /* WHITE TEXT */
+    padding: 14px 20px;
+    font-size: 18px;
+    font-weight: 600;
+    text-align: left;
+    letter-spacing: 0.5px;
+    margin: 0 0 12px 0;             /* spacing below the title */
+}
+
+/* Sidebar links */
+.side-link {
+    display: block;
+    padding: 12px 22px;
+    color: #2d2d2d;
+    text-decoration: none;
+    font-size: 15px;
+    border-radius: 6px;
+    transition: background 0.2s, transform 0.15s;
+}
+
+.side-link:hover {
+    background: #f3f4f6;           
+    transform: translateX(4px);
+}
+
+/* Logout link */
+.logout {
+    margin-top: auto;
+    color: #d11a2a !important;
+}
+
+.logout:hover {
+    background: #ffe5e5;
+    transform: translateX(4px);
+}
+
+/* Main content */
+.main-content {
+    margin-left: 240px;
+    padding: 26px;
+}

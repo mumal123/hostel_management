@@ -9,322 +9,162 @@ if (!isset($_SESSION['user']) || $_SESSION['user']['role'] !== 'warden') {
 
 $user = $_SESSION['user'];
 
-/* ---------------------------------------------------------
-   FETCH DATA
---------------------------------------------------------- */
+/* -------------------------
+   Quick summary numbers
+------------------------- */
+$cnt = function($sql) use ($conn) {
+    $r = mysqli_query($conn, $sql);
+    if (!$r) return 0;
+    $row = mysqli_fetch_row($r);
+    return intval($row[0] ?? 0);
+};
 
-// Complaints (view + warden can update status)
-$complaints_res = mysqli_query($conn,
-    "SELECT c.*, u.name AS student_name 
+$open_complaints = $cnt("SELECT COUNT(*) FROM complaints WHERE status='open'");
+$inprogress_complaints = $cnt("SELECT COUNT(*) FROM complaints WHERE status='in-progress'");
+$closed_complaints = $cnt("SELECT COUNT(*) FROM complaints WHERE status='closed'");
+
+$total_tasks = $cnt("SELECT COUNT(*) FROM tasks");
+$total_shifts = $cnt("SELECT COUNT(*) FROM shifts");
+$total_staff = $cnt("SELECT COUNT(*) FROM users WHERE role IN ('staff','security','caretaker')");
+$total_students = $cnt("SELECT COUNT(*) FROM users WHERE role='student'");
+$total_rooms = $cnt("SELECT COUNT(*) FROM rooms");
+$occupied_beds = $cnt("SELECT COUNT(*) FROM allocations WHERE active=1");
+$vacant_beds = max(0, $total_rooms * 1 - $occupied_beds); // simple, assuming 1 capacity default; adjust if needed
+
+/* -------------------------
+   Recent complaints (5)
+------------------------- */
+$recent_complaints_res = mysqli_query($conn,
+    "SELECT c.id, c.title, c.description, c.status, c.created_at, u.name AS student_name
      FROM complaints c
-     LEFT JOIN users u ON u.id = c.student_id 
-     ORDER BY c.created_at DESC"
+     LEFT JOIN users u ON c.student_id = u.id
+     ORDER BY c.created_at DESC
+     LIMIT 5"
 );
-$complaints = mysqli_fetch_all($complaints_res, MYSQLI_ASSOC);
+$recent_complaints = $recent_complaints_res ? mysqli_fetch_all($recent_complaints_res, MYSQLI_ASSOC) : [];
 
-// Staff list for duty assignment
-$staff_res = mysqli_query($conn,
-    "SELECT id, name FROM users WHERE role IN ('staff','security','caretaker')"
-);
-$staff = mysqli_fetch_all($staff_res, MYSQLI_ASSOC);
-
-// Rooms
-$rooms_res = mysqli_query($conn, "SELECT * FROM rooms");
-$rooms = mysqli_fetch_all($rooms_res, MYSQLI_ASSOC);
-
-// Students
-$students_res = mysqli_query($conn, "SELECT id, name FROM users WHERE role='student'");
-$students = mysqli_fetch_all($students_res, MYSQLI_ASSOC);
-
-// Fetch Tasks
-$tasks_res = mysqli_query($conn, "SELECT * FROM tasks ORDER BY created_at DESC");
-$tasks = mysqli_fetch_all($tasks_res, MYSQLI_ASSOC);
-
-// Fetch Shifts
-$shifts_res = mysqli_query($conn, "SELECT * FROM shifts ORDER BY start_time");
-$shifts = mysqli_fetch_all($shifts_res, MYSQLI_ASSOC);
-
-// Fetch Duty Assignments
-$assign_res = mysqli_query($conn,
-    "SELECT ss.*, 
-            u.name AS staff_name,
-            t.title AS task_name,
-            sh.name AS shift_name,
-            sh.start_time, sh.end_time
+/* -------------------------
+   Upcoming Duty Assignments (next 7 days)
+------------------------- */
+$upcoming_res = mysqli_query($conn,
+    "SELECT ss.id, u.name AS staff_name, t.title AS task_name, sh.name AS shift_name,
+            ss.day_of_week, ss.start_date, ss.end_date, sh.start_time, sh.end_time
      FROM staff_shifts ss
      LEFT JOIN users u ON ss.staff_user_id = u.id
      LEFT JOIN tasks t ON ss.task_id = t.id
      LEFT JOIN shifts sh ON ss.shift_id = sh.id
-     ORDER BY ss.day_of_week, sh.start_time"
+     WHERE ss.end_date >= CURDATE()
+     ORDER BY ss.start_date ASC
+     LIMIT 8"
 );
-$assignments = mysqli_fetch_all($assign_res, MYSQLI_ASSOC);
-
-
-/* ---------------------------------------------------------
-   FORM HANDLING
---------------------------------------------------------- */
-
-// Update complaint status
-if (isset($_POST['update_complaint'])) {
-    $cid = intval($_POST['complaint_id']);
-    $status = $_POST['status'];
-    mysqli_query($conn, "UPDATE complaints SET status='$status' WHERE id=$cid");
-    header("Location: warden_dashboard.php");
-    exit;
-}
-
-// Allocate room
-if (isset($_POST['allocate_room'])) {
-    $student_id = intval($_POST['student_id']);
-    $room_id = intval($_POST['room_id']);
-
-    mysqli_query($conn, "UPDATE allocations SET active=0 WHERE student_id=$student_id");
-    mysqli_query($conn,
-        "INSERT INTO allocations (student_id, room_id, start_date, active)
-         VALUES ($student_id, $room_id, CURDATE(), 1)"
-    );
-
-    header("Location: warden_dashboard.php");
-    exit;
-}
-
-// Create Task
-if (isset($_POST['create_task'])) {
-    $title = mysqli_real_escape_string($conn, $_POST['title']);
-    $desc  = mysqli_real_escape_string($conn, $_POST['description']);
-
-    mysqli_query($conn,
-        "INSERT INTO tasks (title, description) VALUES ('$title', '$desc')"
-    );
-
-    header("Location: warden_dashboard.php");
-    exit;
-}
-
-// Create Shift
-if (isset($_POST['create_shift'])) {
-    $name = $_POST['name'];
-    $start = $_POST['start_time'];
-    $end = $_POST['end_time'];
-
-    mysqli_query($conn,
-        "INSERT INTO shifts (name, start_time, end_time)
-         VALUES ('$name', '$start', '$end')"
-    );
-
-    header("Location: warden_dashboard.php");
-    exit;
-}
-
-// Assign Staff Duty
-if (isset($_POST['assign_duty'])) {
-    $staff_id = intval($_POST['staff_id']);
-    $task_id = intval($_POST['task_id']);
-    $shift_id = intval($_POST['shift_id']);
-    $day = $_POST['day_of_week'];
-    $start = $_POST['start_date'];
-    $end = $_POST['end_date'];
-
-    mysqli_query($conn,
-        "INSERT INTO staff_shifts (staff_user_id, task_id, shift_id, day_of_week, start_date, end_date)
-         VALUES ($staff_id, $task_id, $shift_id, '$day', '$start', '$end')"
-    );
-
-    header("Location: warden_dashboard.php");
-    exit;
-}
+$upcoming = $upcoming_res ? mysqli_fetch_all($upcoming_res, MYSQLI_ASSOC) : [];
 ?>
 <!doctype html>
 <html>
 <head>
-    <title>Warden Dashboard</title>
-    <!-- <link rel="stylesheet" href="assets/style.css"> -->
-     <link rel="stylesheet" href="assets/style.css?v=5">
-
+<meta charset="utf-8">
+<title>Warden - Dashboard</title>
+<link rel="stylesheet" href="assets/style.css?v=7">
 </head>
-
 <body>
-<nav class="topbar">
-  <div class="brand">Hostel - Warden</div>
-  <div class="nav-actions">
-    <?php echo htmlspecialchars($user['name']); ?>
-    <a href="logout.php" class="link">Logout</a>
+
+<?php include 'warden_sidebar.php'; ?>
+
+<div class="main-content">
+
+  <h1>Warden Dashboard</h1>
+
+  <!-- Summary cards -->
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px;margin-bottom:18px">
+    <div class="card">
+      <h3>Complaints</h3>
+      <p class="muted">Open / In-progress / Closed</p>
+      <div style="display:flex;gap:12px;align-items:center;margin-top:12px">
+        <div style="font-size:20px;font-weight:700;color:#b91c1c"><?= $open_complaints ?></div>
+        <div style="font-size:20px;font-weight:700;color:#d97706"><?= $inprogress_complaints ?></div>
+        <div style="font-size:20px;font-weight:700;color:#16a34a"><?= $closed_complaints ?></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Staff & Tasks</h3>
+      <p class="muted">Staff / Tasks / Shifts</p>
+      <div style="margin-top:12px">
+        <div><strong><?= $total_staff ?></strong> staff</div>
+        <div><strong><?= $total_tasks ?></strong> tasks</div>
+        <div><strong><?= $total_shifts ?></strong> shifts</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Rooms & Occupancy</h3>
+      <p class="muted">Rooms / Occupied / Students</p>
+      <div style="margin-top:12px">
+        <div><strong><?= $total_rooms ?></strong> rooms</div>
+        <div><strong><?= $occupied_beds ?></strong> allocated</div>
+        <div><strong><?= $total_students ?></strong> students</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Quick Actions</h3>
+      <p class="muted">Jump to management pages</p>
+      <div style="margin-top:12px;display:flex;flex-direction:column;gap:8px">
+        <a class="btn small" href="warden_complaints.php">Manage Complaints</a>
+        <a class="btn small" href="warden_tasks.php">Manage Tasks</a>
+        <a class="btn small" href="warden_assign_duty.php">Assign Duties</a>
+        <a class="btn small" href="warden_room_allocation.php">Room Allocation</a>
+      </div>
+    </div>
   </div>
-</nav>
 
-<main class="container">
-
-<!-- COMPLAINTS -->
-<section class="card">
-<h3>Complaints</h3>
-
-<table class="table">
-<thead>
-<tr><th>#</th><th>Student</th><th>Description</th><th>Status</th><th>Action</th></tr>
-</thead>
-<tbody>
-<?php foreach ($complaints as $c): ?>
-<tr>
-  <td><?= $c['id'] ?></td>
-  <td><?= htmlspecialchars($c['student_name']) ?></td>
-  <td><?= htmlspecialchars($c['description']) ?></td>
-  <td><?= htmlspecialchars($c['status']) ?></td>
-  <td>
-    <form method="post">
-        <input type="hidden" name="complaint_id" value="<?= $c['id'] ?>">
-        <select name="status">
-            <option value="open">Open</option>
-            <option value="in-progress">In-progress</option>
-            <option value="closed">Closed</option>
-        </select>
-        <button name="update_complaint" class="btn small">Update</button>
-    </form>
-  </td>
-</tr>
-<?php endforeach; ?>
-</tbody>
-</table>
-</section>
-
-
-<!-- CREATE TASK -->
-<section class="card">
-<h3>Create Task</h3>
-<form method="post">
-    <label>Task Title</label>
-    <input type="text" name="title" required>
-
-    <label>Description</label>
-    <textarea name="description"></textarea>
-
-    <button name="create_task" class="btn">Create Task</button>
-</form>
-</section>
-
-
-<!-- CREATE SHIFT -->
-<section class="card">
-<h3>Create Shift</h3>
-<form method="post">
-    <label>Name</label>
-    <input type="text" name="name" required>
-
-    <label>Start Time</label>
-    <input type="time" name="start_time" required>
-
-    <label>End Time</label>
-    <input type="time" name="end_time" required>
-
-    <button name="create_shift" class="btn">Create Shift</button>
-</form>
-</section>
-
-
-<!-- ASSIGN DUTY -->
-<section class="card">
-<h3>Assign Duty</h3>
-<form method="post">
-
-<label>Staff</label>
-<select name="staff_id" required>
-    <?php foreach ($staff as $s): ?>
-        <option value="<?= $s['id'] ?>"><?= htmlspecialchars($s['name']) ?></option>
-    <?php endforeach; ?>
-</select>
-
-<label>Task</label>
-<select name="task_id" required>
-    <?php foreach ($tasks as $t): ?>
-        <option value="<?= $t['id'] ?>"><?= htmlspecialchars($t['title']) ?></option>
-    <?php endforeach; ?>
-</select>
-
-<label>Shift</label>
-<select name="shift_id" required>
-    <?php foreach ($shifts as $sh): ?>
-        <option value="<?= $sh['id'] ?>"><?= htmlspecialchars($sh['name']) ?></option>
-    <?php endforeach; ?>
-</select>
-
-<label>Day of Week</label>
-<select name="day_of_week" required>
-    <option>Mon</option>
-    <option>Tue</option>
-    <option>Wed</option>
-    <option>Thu</option>
-    <option>Fri</option>
-    <option>Sat</option>
-    <option>Sun</option>
-</select>
-
-<label>Start Date</label>
-<input type="date" name="start_date" required>
-
-<label>End Date</label>
-<input type="date" name="end_date" required>
-
-<button name="assign_duty" class="btn">Assign Duty</button>
-
-</form>
-</section>
-
-
-<!-- DUTY LIST -->
-<section class="card">
-<h3>All Duty Assignments</h3>
-
-<table class="table">
-<thead>
-<tr>
-  <th>Staff</th>
-  <th>Task</th>
-  <th>Shift</th>
-  <th>Day</th>
-  <th>Time</th>
-  <th>Date Range</th>
-</tr>
-</thead>
-<tbody>
-
-<?php foreach ($assignments as $a): ?>
-<tr>
-  <td><?= htmlspecialchars($a['staff_name']) ?></td>
-  <td><?= htmlspecialchars($a['task_name']) ?></td>
-  <td><?= htmlspecialchars($a['shift_name']) ?></td>
-  <td><?= $a['day_of_week'] ?></td>
-  <td><?= $a['start_time'] ?>–<?= $a['end_time'] ?></td>
-  <td><?= $a['start_date'] ?> → <?= $a['end_date'] ?></td>
-</tr>
-<?php endforeach; ?>
-
-</tbody>
-</table>
-</section>
-
-
-<!-- ROOM ALLOCATION -->
-<section class="card">
-<h3>Allocate Room</h3>
-<form method="post">
-    <label>Student</label>
-    <select name="student_id">
-        <?php foreach ($students as $s): ?>
-            <option value="<?= $s['id'] ?>"><?= htmlspecialchars($s['name']) ?></option>
+  <!-- Recent complaints -->
+  <section class="card">
+    <h3>Recent Complaints</h3>
+    <?php if (empty($recent_complaints)): ?>
+      <p class="muted">No recent complaints</p>
+    <?php else: ?>
+      <table class="table">
+        <thead><tr><th>#</th><th>Student</th><th>Title</th><th>Status</th><th>Date</th></tr></thead>
+        <tbody>
+        <?php foreach ($recent_complaints as $c): ?>
+          <tr>
+            <td><?= $c['id'] ?></td>
+            <td><?= htmlspecialchars($c['student_name']) ?></td>
+            <td><?= htmlspecialchars($c['title'] ?? substr($c['description'],0,60)) ?></td>
+            <td><?= htmlspecialchars($c['status']) ?></td>
+            <td><?= htmlspecialchars($c['created_at']) ?></td>
+          </tr>
         <?php endforeach; ?>
-    </select>
+        </tbody>
+      </table>
+    <?php endif; ?>
+  </section>
 
-    <label>Room</label>
-    <select name="room_id">
-        <?php foreach ($rooms as $r): ?>
-            <option value="<?= $r['id'] ?>"><?= htmlspecialchars($r['room_label']) ?></option>
+  <!-- Upcoming duty assignments -->
+  <section class="card">
+    <h3>Upcoming Duties</h3>
+    <?php if (empty($upcoming)): ?>
+      <p class="muted">No upcoming duties</p>
+    <?php else: ?>
+      <table class="table">
+        <thead><tr><th>Staff</th><th>Task</th><th>Shift</th><th>Day</th><th>Date Range</th></tr></thead>
+        <tbody>
+        <?php foreach ($upcoming as $a): ?>
+          <tr>
+            <td><?= htmlspecialchars($a['staff_name']) ?></td>
+            <td><?= htmlspecialchars($a['task_name']) ?></td>
+            <td><?= htmlspecialchars($a['shift_name'] . ' (' . $a['start_time'] . '–' . $a['end_time'] . ')') ?></td>
+            <td><?= htmlspecialchars($a['day_of_week']) ?></td>
+            <td><?= htmlspecialchars($a['start_date'] . ' → ' . $a['end_date']) ?></td>
+          </tr>
         <?php endforeach; ?>
-    </select>
+        </tbody>
+      </table>
+    <?php endif; ?>
+  </section>
 
-    <button name="allocate_room" class="btn">Allocate</button>
-</form>
-</section>
+</div><!-- /.main-content -->
 
-
-</main>
 </body>
 </html>
